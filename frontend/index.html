@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skripsi IoT Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f1f5f9;
+            --primary-color: #3b82f6;
+            --accent-color: #06b6d4;
+            --success-color: #22c55e;
+            --error-color: #ef4444;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            padding: 20px;
+        }
+
+        /* Generic Card Style */
+        .card {
+            background-color: var(--card-bg);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        h1, h2 { margin-top: 0; }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0 16px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background-color: #0f172a;
+            color: white;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover { opacity: 0.9; }
+
+        /* Dashboard Specifics */
+        #dashboard { display: none; }
+
+        .log-container {
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: #020617;
+        }
+
+        .log-item {
+            padding: 12px;
+            border-bottom: 1px solid #1e293b;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .log-item:last-child { border-bottom: none; }
+        .log-topic { color: var(--accent-color); font-weight: bold; font-size: 0.9em; }
+        .log-message { color: var(--text-color); margin-left: 10px; flex-grow: 1; }
+        .log-time { color: #64748b; font-size: 0.8em; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            background-color: var(--error-color);
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .connected { background-color: var(--success-color); }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- Login Section -->
+        <div id="login-section" class="card" style="max-width: 400px; margin: 0 auto;">
+            <h2 style="text-align: center; margin-bottom: 2rem;">System Access</h2>
+            <form id="login-form">
+                <label>Username</label>
+                <input type="text" id="username" placeholder="admin" required>
+                <label>Password</label>
+                <input type="password" id="password" placeholder="admin123" required>
+                <button type="submit">Login</button>
+                <p id="login-error" style="color: var(--error-color); text-align: center; display: none; margin-top: 10px;"></p>
+            </form>
+        </div>
+
+        <!-- Dashboard Section -->
+        <div id="dashboard">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>Live Data Stream</h2>
+                    <div style="display: flex; align-items: center;">
+                        <span id="connection-status" class="status-dot"></span>
+                        <span id="status-text" style="font-size: 0.9em; color: #94a3b8;">Disconnected</span>
+                    </div>
+                </div>
+                
+                <div class="log-container" id="log-list">
+                    <div style="padding: 20px; text-align: center; color: #64748b;">Waiting for data...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.IO Client Library -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <script>
+        const loginSection = document.getElementById('login-section');
+        const dashboard = document.getElementById('dashboard');
+        const loginForm = document.getElementById('login-form');
+        const loginError = document.getElementById('login-error');
+        const logList = document.getElementById('log-list');
+        const statusDot = document.getElementById('connection-status');
+        const statusText = document.getElementById('status-text');
+
+        let socket;
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('http://localhost:3000/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Switch to Dashboard
+                    loginSection.style.display = 'none';
+                    dashboard.style.display = 'block';
+                    initSocket();
+                } else {
+                    showError(data.message);
+                }
+            } catch (err) {
+                showError("Connection error. Is backend running?");
+            }
+        });
+
+        function showError(msg) {
+            loginError.textContent = msg;
+            loginError.style.display = 'block';
+        }
+
+        function initSocket() {
+            // Connect to Backend
+            socket = io('http://localhost:3000');
+
+            socket.on('connect', () => {
+                statusDot.classList.add('connected');
+                statusText.textContent = 'Connected to Server';
+                statusText.style.color = 'var(--success-color)';
+            });
+
+            socket.on('disconnect', () => {
+                statusDot.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+                statusText.style.color = '#94a3b8';
+            });
+
+            socket.on('device-update', (data) => {
+                addLogItem(data);
+            });
+        }
+
+        function addLogItem(data) {
+            // Remove "Waiting for data..." if present
+            if (logList.children[0] && logList.children[0].innerText === "Waiting for data...") {
+                logList.innerHTML = '';
+            }
+
+            const item = document.createElement('div');
+            item.className = 'log-item';
+            
+            const time = new Date(data.timestamp).toLocaleTimeString();
+            
+            item.innerHTML = `
+                <div class="log-topic">${data.topic}</div>
+                <div class="log-message">${data.message}</div>
+                <div class="log-time">${time}</div>
+            `;
+
+            logList.prepend(item); // Add to top
+        }
+    </script>
+</body>
+</html>
